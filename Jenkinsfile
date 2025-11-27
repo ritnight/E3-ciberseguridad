@@ -63,6 +63,28 @@ pipeline {
                 dependencyCheck additionalArguments: "--scan . --format HTML --out dependency-check-report --enableExperimental --enableRetired --nvdApiKey ${NVD_API_KEY}", odcInstallation: 'DependencyCheck'
             }
         }
+        stage('OWASP ZAP Security Scan') {
+            steps {
+                script {
+                    def zapHome = tool name: 'OWASPZAP', type: 'com.cloudbees.jenkins.plugins.customtools.CustomTool'
+                    
+                    sh "${zapHome}/zap.sh -cmd -quickurl ${TARGET_URL} -quickout ${WORKSPACE}/zap-report.html"
+                }
+            }
+        }
+
+        stage('Publish ZAP Report') {
+            steps {
+                publishHTML (target: [
+                    allowMissing: false,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: '.',
+                    reportFiles: 'zap-report.html',
+                    reportName: 'OWASP ZAP Report'
+                ])
+            }
+        }
 
         stage('Publish Reports') {
             steps {
