@@ -1,11 +1,6 @@
 from flask import Flask, request, render_template_string, session, redirect, url_for, flash
-import sqlite3
 import os
 import hashlib
-import psycopg2 as psg
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from psycopg2.extras import RealDictCursor
 import mysql.connector
 import pymysql.cursors
 from hashlib import sha256
@@ -156,4 +151,4 @@ def admin():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
