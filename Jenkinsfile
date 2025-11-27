@@ -68,7 +68,7 @@ pipeline {
                 script {
                     def zapHome = tool name: 'OWASPZAP', type: 'com.cloudbees.jenkins.plugins.customtools.CustomTool'
                     
-                    sh "${zapHome}/zap.sh -cmd -quickurl ${TARGET_URL} -quickout ${WORKSPACE}/zap-report.html"
+                    sh "${zapHome}/zap.sh -cmd -port 8090 -quickurl ${TARGET_URL} -quickout ${WORKSPACE}/zap-report.html"
                 }
             }
         }
