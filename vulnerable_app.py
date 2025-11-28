@@ -2,34 +2,29 @@ from flask import Flask, request, render_template_string, session, redirect, url
 import os
 import hashlib
 import mysql.connector
-import pymysql.cursors
-from hashlib import sha256
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
 
+# MITIGACIÓN: Secret Key segura desde variables de entorno
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24))
 
 def get_db_connection():
-
+    # MITIGACIÓN: Credenciales extraídas de variables de entorno (No hardcoded)
     db_config = {
-        'host': 'localhost',  # El servidor local de XAMPP
-        'user': 'root',       # El usuario de MySQL
-        'password': '',       # Tu contraseña (si no tienes una, déjala vacía)
-        'database': 'prueba' # El nombre de la base de datos
+        'host': os.environ.get('DB_HOST', 'localhost'),
+        'user': os.environ.get('DB_USER', 'root'),
+        'password': os.environ.get('DB_PASSWORD', ''), # Lee la password del sistema o usa vacía
+        'database': os.environ.get('DB_NAME', 'prueba')
     }
     conn = mysql.connector.connect(**db_config)
-
     return conn
-
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-
 @app.route('/')
 def index():
     return 'Welcome to the Task Manager Application!'
-
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -38,36 +33,33 @@ def login():
         password = request.form['password']
 
         conn = get_db_connection()
+        cursor = conn.cursor() # Usamos cursor estándar para acceder por índices [0]
 
-        print(password)
-        if "' OR '" in password:
-            query = f"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'"
-            user = conn.execute(query).fetchone()
-        else:
-            query = "SELECT * FROM users WHERE username = %s AND password = %s"
-            hashed_password = hash_password(password)
+        # MITIGACIÓN CRÍTICA: Se eliminó el IF que permitía inyección SQL.
+        # Ahora SIEMPRE se usa consulta parametrizada.
+        query = "SELECT * FROM users WHERE username = %s AND password = %s"
+        hashed_password = hash_password(password)
 
-            print(password)
-            print(hashed_password)
-          
-            cur = conn.cursor(pymysql.cursors.DictCursor)
-           
-            cur.execute(query, (username, hashed_password))
-            user = cur.fetchone()
-            cur.close()
-            #user = conn.execute(query, (username, hashed_password)).fetchone()
+        try:
+            # Los parámetros van en una tupla, separados de la query
+            cursor.execute(query, (username, hashed_password))
+            user = cursor.fetchone()
+        except mysql.connector.Error as err:
+            print(f"Error: {err}")
+            user = None
+        finally:
+            cursor.close()
+            conn.close()
 
-        print("Consulta SQL generada:", query)
-
-        print (user)
-        print(session)
-        print(user[0])
         if user:
+            # Asumiendo que la tabla users es: id (0), username (1), password (2), role (3)
             session['user_id'] = user[0]
-            session['role'] = user[3]
+            # Verificamos si existe la columna rol, si no, asignamos 'user' por defecto
+            session['role'] = user[3] if len(user) > 3 else 'user'
             return redirect(url_for('dashboard'))
         else:
             return 'Invalid credentials!'
+            
     return '''
         <form method="post">
             Username: <input type="text" name="username"><br>
@@ -76,7 +68,6 @@ def login():
         </form>
     '''
 
-
 @app.route('/dashboard')
 def dashboard():
     if 'user_id' not in session:
@@ -84,10 +75,13 @@ def dashboard():
 
     user_id = session['user_id']
     conn = get_db_connection()
-    cur = conn.cursor(pymysql.cursors.DictCursor)
+    # Usamos dictionary cursor aquí para facilitar el uso en el template (task['task'])
+    cur = conn.cursor(dictionary=True) 
+    
     cur.execute("SELECT * FROM tasks WHERE user_id = %s", (user_id,))
     tasks = cur.fetchall() 
     cur.close()
+    conn.close()
 
     return render_template_string('''
         <h1>Welcome, user {{ user_id }}!</h1>
@@ -98,32 +92,29 @@ def dashboard():
         <h2>Your Tasks</h2>
         <ul>
         {% for task in tasks %}
-            <li>{{ task['task'] }} <a href="/delete_task/{{ task['id'] }}">Delete</a></li>
+            {# Asegúrate que tu tabla tasks tenga columnas 'id' y 'task' #}
+            <li>{{ task['tasks'] }} <a href="/delete_task/{{ task['id'] }}">Delete</a></li>
         {% endfor %}
         </ul>
     ''', user_id=user_id, tasks=tasks)
-
 
 @app.route('/add_task', methods=['POST'])
 def add_task():
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    task = request.form['task']
+    task_content = request.form['task']
     user_id = session['user_id']
 
     conn = get_db_connection()
-    cur = conn.cursor(pymysql.cursors.DictCursor)
-    cur.execute("INSERT INTO tasks (user_id, tasks) VALUES (%s, %s)", (user_id, task))
-    tasks = cur.fetchall() 
-    #result = cur.fetchall()   # o fetchone()
+    cur = conn.cursor()
+    # MITIGACIÓN: Consulta parametrizada para INSERT
+    cur.execute("INSERT INTO tasks (user_id, tasks) VALUES (%s, %s)", (user_id, task_content))
     conn.commit()
     cur.close()
     conn.close()
 
-
     return redirect(url_for('dashboard'))
-
 
 @app.route('/delete_task/<int:task_id>')
 def delete_task(task_id):
@@ -131,16 +122,14 @@ def delete_task(task_id):
         return redirect(url_for('login'))
 
     conn = get_db_connection()
-    cur = conn.cursor(pymysql.cursors.DictCursor)
+    cur = conn.cursor()
+    # MITIGACIÓN: Consulta parametrizada para DELETE
     cur.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
-    tasks = cur.fetchall() 
-    #result = cur.fetchall()   # o fetchone()
     conn.commit()
     cur.close()
     conn.close()
 
     return redirect(url_for('dashboard'))
-
 
 @app.route('/admin')
 def admin():
@@ -149,6 +138,6 @@ def admin():
 
     return 'Welcome to the admin panel!'
 
-
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # MITIGACIÓN: Debug desactivado para producción
+    app.run(host='0.0.0.0', port=5000, debug=False)
